@@ -1,0 +1,237 @@
+-- ======================================================
+--                  SISTEMA DE DIRECCIÓN VISUAL
+-- RUTA: StarterPlayer/StarterPlayerScripts/LocalScript
+-- AUTOR: Dyverblox
+-- ======================================================
+
+-- =========================================================
+-- SERVICIOS
+-- =========================================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ContentProvider = game:GetService("ContentProvider")
+local CollectionService = game:GetService("CollectionService")
+
+-- =========================================================
+-- DATOS DEL JUGADOR
+-- =========================================================
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local upperTorso = character:WaitForChild("UpperTorso")
+local frontAttachment = upperTorso:WaitForChild("BodyFrontAttachment")
+
+-- =========================================================
+-- CONFIGURACIÓN GENERAL
+-- =========================================================
+local TAG_OBJETIVO = "SistemaDireccion"
+local ATRIBUTO_ORDEN = "Objetivo"
+local ATRIBUTO_DETECCION = "Distancia"
+local ATRIBUTO_RESALTAR = "Resaltar"
+
+local DISTANCIA_DEFECTO = 15
+local TIEMPO_INICIO = 1
+local INTERVALO_AVISO = 3
+
+local ultimoAviso, beam, objetivoActual, conexionPrompt = {}, nil, nil, nil
+
+-- =========================================================
+-- PRE-CARGAR TEXTURA
+-- =========================================================
+local TEXTURA_FLECHA = "rbxassetid://94459865450488"
+ContentProvider:PreloadAsync({ TEXTURA_FLECHA })
+
+-- =========================================================
+-- FUNCIONES AUXILIARES
+-- =========================================================
+local function advertir(objeto, atributo, valor)
+	local ahora = os.clock()
+	if not ultimoAviso[objeto] or (ahora - ultimoAviso[objeto]) > INTERVALO_AVISO then
+		warn(string.format(
+			"[SistemaFlecha] ⚠ El atributo '%s' de '%s' no es válido (valor: %s)",
+			atributo, objeto:GetFullName(), tostring(valor)
+			))
+		ultimoAviso[objeto] = ahora
+	end
+end
+
+local function obtenerPartePrincipal(objeto)
+	if objeto:IsA("Model") then
+		return objeto.PrimaryPart or objeto:FindFirstChildWhichIsA("BasePart")
+	elseif objeto:IsA("BasePart") then
+		return objeto
+	end
+	return nil
+end
+
+-- =========================================================
+-- FUNCIONES DE RESALTADO
+-- =========================================================
+local function setResaltado(objeto, estado)
+	if not objeto then return end
+	local attrResaltar = objeto:GetAttribute(ATRIBUTO_RESALTAR)
+	if estado and not attrResaltar then return end
+
+	for _, hijo in ipairs(objeto:GetChildren()) do
+		if hijo:IsA("Highlight") or hijo:IsA("SelectionBox") then
+			hijo:Destroy()
+		end
+	end
+
+	if not estado then return end
+
+	if objeto:IsA("Model") then
+		local highlight = Instance.new("Highlight")
+		highlight.Name = "ResaltadoModel"
+		highlight.FillTransparency = 1
+		highlight.FillColor = Color3.new(1, 1, 0)
+		highlight.OutlineColor = Color3.new(0, 0, 0)
+		highlight.OutlineTransparency = 0
+		highlight.Adornee = objeto
+		highlight.Parent = objeto
+	else
+		if objeto.Transparency > 0 then
+			local box = Instance.new("SelectionBox")
+			box.Name = "ResaltadoBox"
+			box.Color3 = Color3.new(0, 0, 0)
+			box.LineThickness = 0.1
+			box.Adornee = objeto
+			box.Parent = objeto
+		else
+			local hl = Instance.new("Highlight")
+			hl.Name = "Resaltado"
+			hl.FillTransparency = 1
+			hl.FillColor = Color3.new(1, 1, 0)
+			hl.OutlineColor = Color3.new(0, 0, 0)
+			hl.OutlineTransparency = 0
+			hl.Adornee = objeto
+			hl.Parent = objeto
+		end
+	end
+end
+
+-- =========================================================
+-- CREAR O REUTILIZAR BEAM
+-- =========================================================
+local function crearBeam(objetivo)
+	local parteObjetivo = obtenerPartePrincipal(objetivo)
+	if not parteObjetivo then return end
+
+	local objetivoAttachment = parteObjetivo:FindFirstChild("BeamAttachment") or Instance.new("Attachment")
+	objetivoAttachment.Name = "BeamAttachment"
+	objetivoAttachment.Parent = parteObjetivo
+
+	if not beam then
+		beam = Instance.new("Beam")
+		beam.Name = "GuiaBeam"
+		beam.Attachment0 = frontAttachment
+		beam.Color = ColorSequence.new(Color3.fromRGB(249, 241, 0))
+		beam.Width0, beam.Width1 = 4, 4
+		beam.FaceCamera = true
+		beam.LightEmission = 0.1
+		beam.Transparency = NumberSequence.new(0)
+		beam.Texture = TEXTURA_FLECHA
+		beam.TextureMode = Enum.TextureMode.Wrap
+		beam.TextureLength = 7
+		beam.TextureSpeed = 1
+		beam.Parent = upperTorso
+	end
+
+	beam.Attachment1 = objetivoAttachment
+	beam.Enabled = true
+end
+
+-- =========================================================
+-- OBTENER SIGUIENTE OBJETIVO
+-- =========================================================
+local function obtenerSiguienteObjetivo()
+	local mejor, menorOrden = nil, math.huge
+
+	for _, objeto in ipairs(CollectionService:GetTagged(TAG_OBJETIVO)) do
+		if not (objeto:IsA("BasePart") or objeto:IsA("Model")) then continue end
+
+		local orden = objeto:GetAttribute(ATRIBUTO_ORDEN)
+		if typeof(orden) ~= "number" then
+			advertir(objeto, ATRIBUTO_ORDEN, orden)
+			continue
+		end
+
+		if orden > 0 and orden < menorOrden then
+			mejor, menorOrden = objeto, orden
+		end
+	end
+
+	return mejor
+end
+
+-- =========================================================
+-- AVANZAR AL SIGUIENTE OBJETIVO
+-- =========================================================
+local function avanzar()
+	if not objetivoActual then return end
+	objetivoActual:SetAttribute(ATRIBUTO_ORDEN, 0)
+	--(Aquí dentro puedes hacer un llamado a un evento remoto)
+	setResaltado(objetivoActual, false)
+	if beam then beam.Enabled = false end
+
+	if conexionPrompt then
+		conexionPrompt:Disconnect()
+		conexionPrompt = nil
+	end
+
+	objetivoActual = obtenerSiguienteObjetivo()
+	if objetivoActual then
+		crearBeam(objetivoActual)
+		setResaltado(objetivoActual, true)
+
+		local prompt = objetivoActual:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if prompt then
+			conexionPrompt = prompt.Triggered:Connect(avanzar)
+		end
+	end
+end
+
+-- =========================================================
+-- ACTUALIZAR POR DISTANCIA
+-- =========================================================
+local function actualizar()
+	if not objetivoActual or not objetivoActual.Parent then return end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local rango = objetivoActual:GetAttribute(ATRIBUTO_DETECCION) or DISTANCIA_DEFECTO
+	if typeof(rango) ~= "number" then
+		advertir(objetivoActual, ATRIBUTO_DETECCION, rango)
+		return
+	end
+
+	local parteReferencia = obtenerPartePrincipal(objetivoActual)
+	if not parteReferencia then return end
+
+	local distancia = (hrp.Position - parteReferencia.Position).Magnitude
+	local prompt = objetivoActual:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+	if not prompt and distancia <= rango then
+		avanzar()
+	end
+end
+
+-- =========================================================
+-- INICIALIZACIÓN
+-- =========================================================
+task.delay(TIEMPO_INICIO, function()
+	objetivoActual = obtenerSiguienteObjetivo()
+	if objetivoActual then
+		crearBeam(objetivoActual)
+		setResaltado(objetivoActual, true)
+
+		local prompt = objetivoActual:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if prompt then
+			conexionPrompt = prompt.Triggered:Connect(avanzar)
+		end
+	end
+
+	RunService.RenderStepped:Connect(actualizar)
+end)
+
+
