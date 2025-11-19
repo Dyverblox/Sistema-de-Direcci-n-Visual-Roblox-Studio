@@ -64,21 +64,71 @@ local function obtenerPartePrincipal(objeto)
 end
 
 -- =========================================================
--- FUNCIONES DE RESALTADO
+-- FUNCIONES DE RESALTADO (MEJORADAS CON SISTEMA DE RESTAURACIÓN)
 -- =========================================================
-local function setResaltado(objeto, estado)
-	if not objeto then return end
-	local attrResaltar = objeto:GetAttribute(ATRIBUTO_RESALTAR)
-	if estado and not attrResaltar then return end
+
+-- Tabla para guardar los resaltados originales de cada objeto
+local resaltadoOriginal = {}
+
+local function guardarResaltadoOriginal(objeto)
+	if resaltadoOriginal[objeto] then return end
+
+	resaltadoOriginal[objeto] = {}
 
 	for _, hijo in ipairs(objeto:GetChildren()) do
 		if hijo:IsA("Highlight") or hijo:IsA("SelectionBox") then
+			table.insert(resaltadoOriginal[objeto], hijo:Clone())
+		end
+	end
+end
+
+local function restaurarResaltado(objeto)
+	if not resaltadoOriginal[objeto] then return end
+
+	-- Eliminar resaltados que tú agregaste
+	for _, hijo in ipairs(objeto:GetChildren()) do
+		if hijo.Name == "Resaltado" or hijo.Name == "ResaltadoModel" or hijo.Name == "ResaltadoBox" then
 			hijo:Destroy()
 		end
 	end
 
-	if not estado then return end
+	-- Restaurar cada resaltado original
+	for _, clon in ipairs(resaltadoOriginal[objeto]) do
+		clon.Parent = objeto
+	end
+end
 
+local function setResaltado(objeto, estado)
+	if not objeto then return end
+
+	local attrResaltar = objeto:GetAttribute(ATRIBUTO_RESALTAR)
+
+	-- Si el atributo Resaltar está apagado:
+	-- NO tocamos los resaltados originales
+	if not attrResaltar then
+		if not estado then return end
+		return
+	end
+
+	-- Guardamos los resaltados originales solo la primera vez
+	if not resaltadoOriginal[objeto] then
+		guardarResaltadoOriginal(objeto)
+	end
+
+	-- Limpiar resaltados generados por este sistema
+	for _, hijo in ipairs(objeto:GetChildren()) do
+		if hijo.Name == "Resaltado" or hijo.Name == "ResaltadoModel" or hijo.Name == "ResaltadoBox" then
+			hijo:Destroy()
+		end
+	end
+
+	-- Si queremos quitar resaltado (estado = false), restauramos originales
+	if not estado then
+		restaurarResaltado(objeto)
+		return
+	end
+
+	-- CREAR RESALTADO NUEVO SEGÚN EL TIPO DE OBJETO
 	if objeto:IsA("Model") then
 		local highlight = Instance.new("Highlight")
 		highlight.Name = "ResaltadoModel"
@@ -88,6 +138,7 @@ local function setResaltado(objeto, estado)
 		highlight.OutlineTransparency = 0
 		highlight.Adornee = objeto
 		highlight.Parent = objeto
+
 	else
 		if objeto.Transparency > 0 then
 			local box = Instance.new("SelectionBox")
@@ -108,7 +159,6 @@ local function setResaltado(objeto, estado)
 		end
 	end
 end
-
 -- =========================================================
 -- CREAR O REUTILIZAR BEAM
 -- =========================================================
